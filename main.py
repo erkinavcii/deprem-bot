@@ -3,7 +3,7 @@ import json
 import os
 import math
 import sys
-from datetime import datetime, timedelta, timezone # Timezone eklendi
+from datetime import datetime, timedelta, timezone
 
 # Yerelde çalışırken .env yükle
 try:
@@ -21,6 +21,7 @@ API_URL = "https://api.orhanaydogdu.com.tr/deprem/kandilli/live"
 MIN_MAGNITUDE = 4.0
 CHECK_INTERVAL = 20
 MAX_DISTANCE_KM = 500
+MESSAGE_LIMIT = 5  # En fazla kaç detaylı mesaj atılsın?
 
 # Koordinat Kontrolü
 try:
@@ -67,7 +68,6 @@ def get_earthquake_data():
 
 # --- GÜNLÜK RAPOR ---
 def check_daily_report(earthquakes, now_tr):
-    # 09:00 - 09:20 arası (Github gecikme payı dahil)
     if not (now_tr.hour == 9 and 0 <= now_tr.minute <= 20):
         return
 
@@ -81,10 +81,9 @@ def check_daily_report(earthquakes, now_tr):
         try:
             date_str = eq["date_time"]
             eq_time = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-            
             diff_hours = (now_tr - eq_time).total_seconds() / 3600
-            if diff_hours > 24:
-                continue
+            
+            if diff_hours > 24: continue
                 
             eq_lon = eq["geojson"]["coordinates"][0]
             eq_lat = eq["geojson"]["coordinates"][1]
@@ -94,9 +93,7 @@ def check_daily_report(earthquakes, now_tr):
                 mag = float(eq["mag"])
                 count_24h += 1
                 total_mag_sum += mag
-                
-                if mag > max_mag_24h:
-                    max_mag_24h = mag
+                if mag > max_mag_24h: max_mag_24h = mag
         except:
             continue
             
@@ -115,9 +112,11 @@ def check_daily_report(earthquakes, now_tr):
     send_telegram(msg)
     print("✅ Günlük rapor gönderildi.")
 
-# --- ANLIK KONTROL ---
+# --- ANLIK KONTROL (LİMİTLİ) ---
 def check_new_earthquakes(earthquakes, now_tr):
-    found_any = False
+    # 1. Havuz (Toplama)
+    valid_quakes = []
+
     for eq in earthquakes:
         try:
             mag = float(eq["mag"])
@@ -132,26 +131,60 @@ def check_new_earthquakes(earthquakes, now_tr):
             eq_time = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
             diff_minutes = (now_tr - eq_time).total_seconds() / 60
             
+            # Filtreleme
             if dist_km <= MAX_DISTANCE_KM and mag >= MIN_MAGNITUDE and 0 <= diff_minutes <= CHECK_INTERVAL:
-                msg = (
-                    f"🚨 **DEPREM UYARISI!**\n\n"
-                    f"📍 **Yer:** {title}\n"
-                    f"📏 **Mesafe:** {int(dist_km)} km\n"
-                    f"📉 **Büyüklük:** {mag}\n"
-                    f"🕒 **Saat:** {date_str}\n"
-                    f"⚠ **Derinlik:** {depth} km"
-                )
-                print(f"⚠ TESPİT: {title}")
-                send_telegram(msg)
-                found_any = True
+                # Tüm veriyi bir sözlük (dict) olarak listeye atıyoruz
+                valid_quakes.append({
+                    "mag": mag,
+                    "title": title,
+                    "date": date_str,
+                    "depth": depth,
+                    "dist": dist_km
+                })
         except:
             continue
-            
-    if not found_any:
+
+    if not valid_quakes:
         print("Anlık risk yok.")
+        return
+
+    # 2. Sıralama (En büyükten en küçüğe)
+    # 'mag' anahtarına göre ters (reverse) sırala
+    valid_quakes.sort(key=lambda x: x["mag"], reverse=True)
+
+    # 3. Dilimleme (Slicing)
+    top_quakes = valid_quakes[:MESSAGE_LIMIT]      # İlk 5
+    remaining_quakes = valid_quakes[MESSAGE_LIMIT:] # Geriye kalanlar
+
+    print(f"⚠ Toplam {len(valid_quakes)} deprem bulundu. İlk {len(top_quakes)} tanesi gönderiliyor.")
+
+    # 4. Detaylı Mesajları Gönder
+    for q in top_quakes:
+        msg = (
+            f"🚨 **DEPREM UYARISI!**\n\n"
+            f"📍 **Yer:** {q['title']}\n"
+            f"📏 **Mesafe:** {int(q['dist'])} km\n"
+            f"📉 **Büyüklük:** {q['mag']}\n"
+            f"🕒 **Saat:** {q['date']}\n"
+            f"⚠ **Derinlik:** {q['depth']} km"
+        )
+        send_telegram(msg)
+
+    # 5. Özet Mesaj (Eğer limit aşıldıysa)
+    if remaining_quakes:
+        count_rem = len(remaining_quakes)
+        max_rem = max(q["mag"] for q in remaining_quakes)
+        
+        summary_msg = (
+            f"⚠️ **DİKKAT:** Bölgede yoğun hareketlilik var.\n\n"
+            f"Yukarıdakilere ek olarak **{count_rem} adet** daha sarsıntı tespit edildi.\n"
+            f"Bunların en büyüğü: **{max_rem}** büyüklüğünde.\n"
+            f"Lütfen tedbirli olun."
+        )
+        send_telegram(summary_msg)
+        print(f"➕ Ekstra {count_rem} deprem için özet geçildi.")
 
 if __name__ == "__main__":
-    # Timezone Fix Uygulanmış Saat:
     now_tr = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=3)
     print(f"🕒 Sistem Saati (TR): {now_tr.strftime('%H:%M')}")
     

@@ -17,9 +17,11 @@ Bu proje, **Kandilli Rasathanesi** verilerini kullanarak belirlediğiniz konum v
 ### ✨ Özellikler
 * **Sunucusuz Mimari:** GitHub Actions üzerinde CRON job olarak çalışır (Her 15 dakikada bir).
 * **Konum Filtresi:** Haversine formülü ile sizin konumunuza olan mesafeyi ölçer (Örn: Sadece 500km çapındakileri bildir).
+* **Haritalı Bildirim:** Depremin merkez üssünü ve sizin konumunuzu gösteren görsel harita ekler (Geoapify).
 * **Akıllı Bildirim:** Sadece belirlediğiniz büyüklük (Örn: 4.0+) üzerindeki depremleri bildirir.
-* **Heartbeat (Günlük Rapor):** Her sabah 09:00'da sistemin çalıştığını teyit eder ve son 24 saatin istatistiklerini (Toplam deprem, En büyük, Ortalama) raporlar.
-* **Güvenlik:** Hassas veriler (Koordinatlar, API Token) GitHub Secrets içerisinde şifreli saklanır.
+* **Spam Koruması:** Yoğun artçı sarsıntılarda mesaj kirliliğini önlemek için akıllı özetleme yapar (İlk 5 detaylı, gerisi özet).
+* **Heartbeat (Günlük Rapor):** Her sabah 09:00'da sistemin çalıştığını teyit eder ve son 24 saatin istatistiklerini raporlar.
+* **Güvenlik:** Hassas veriler GitHub Secrets içerisinde şifreli saklanır.
 * **Anti-Ban:** `User-Agent Spoofing` tekniği ile API engellemelerine karşı korumalıdır.
 
 ---
@@ -31,9 +33,11 @@ This project tracks real-time earthquake data from **Kandilli Observatory**, fil
 ### ✨ Features
 * **Serverless Architecture:** Runs as a CRON job on GitHub Actions (Every 15 minutes).
 * **Location Filter:** Uses Haversine formula to calculate distance to user (e.g., alert only within 500km radius).
+* **Visual Maps:** Attaches a static map image showing the epicenter and your location (Geoapify).
 * **Smart Alerts:** Notifications only for earthquakes above a specific magnitude (e.g., 4.0+).
-* **Heartbeat (Daily Report):** Sends a "System Active" confirmation at 09:00 AM daily with 24h statistics (Total count, Max magnitude, Average).
-* **Security:** Sensitive data (Coordinates, API Tokens) are stored securely in GitHub Secrets.
+* **Spam Protection:** Summarizes notifications during seismic storms to prevent flooding (Top 5 detailed, rest summarized).
+* **Heartbeat (Daily Report):** Sends a "System Active" confirmation at 09:00 AM daily with 24h statistics.
+* **Security:** Sensitive data is stored securely in GitHub Secrets.
 * **Anti-Ban:** Implements `User-Agent Spoofing` to prevent API blocking.
 
 ---
@@ -54,7 +58,12 @@ This project tracks real-time earthquake data from **Kandilli Observatory**, fil
 1. Create a new bot via `@BotFather` on Telegram to get a **Token**.
 2. Find your own **Chat ID** via `@userinfobot`.
 
-### 3. GitHub Secrets Configuration
+### 3. Geoapify Setup (For Maps)
+**[TR]** [Geoapify.com](https://www.geoapify.com/)'a üye olun, yeni bir proje oluşturun ve **API Key** alın (Ücretsizdir).
+<br>
+**[EN]** Sign up at [Geoapify.com](https://www.geoapify.com/), create a new project, and get an **API Key** (Free tier available).
+
+### 4. GitHub Secrets Configuration
 **[TR]** Reponuzun **Settings -> Secrets and variables -> Actions** kısmına giderek aşağıdaki "Repository Secret"ları ekleyin:
 <br>
 **[EN]** Go to **Settings -> Secrets and variables -> Actions** in your repository and add the following 'Repository Secrets':
@@ -65,8 +74,9 @@ This project tracks real-time earthquake data from **Kandilli Observatory**, fil
 | `TELEGRAM_CHAT_ID` | Sizin kullanıcı ID'niz | `987654321` |
 | `MY_LAT` | Evinizin Enlemi (Latitude) | `41.00` (Istanbul Example) |
 | `MY_LON` | Evinizin Boylamı (Longitude) | `28.97` (Istanbul Example) |
+| `GEOAPIFY_API_KEY` | Harita Görseli için API Key | `aa7890abcdef...` |
 
-### 4. Enable Actions
+### 5. Enable Actions
 **[TR]** Reponuzdaki **Actions** sekmesine gidin ve workflow'ların çalışmasına izin verin (Enable). İlk çalıştırmayı manuel olarak "Run workflow" butonuyla yapabilirsiniz.
 <br>
 **[EN]** Go to the **Actions** tab in your repository and enable the workflows. You can trigger the first run manually using the "Run workflow" button.
@@ -83,3 +93,4 @@ You can customize filters by changing these constants in `main.py`:
 MIN_MAGNITUDE = 4.0   # Minimum magnitude to alert
 CHECK_INTERVAL = 20   # Time window in minutes
 MAX_DISTANCE_KM = 500 # Radius in Kilometers
+MESSAGE_LIMIT = 5     # Max detailed messages per run

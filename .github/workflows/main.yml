@@ -24,4 +24,6 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MY_LAT: ${{ secrets.MY_LAT }}
+          MY_LON: ${{ secrets.MY_LON }}
         run: python main.py

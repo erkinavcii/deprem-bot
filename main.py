@@ -15,13 +15,16 @@ except ImportError:
 # --- AYARLAR ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+GEOAPIFY_API_KEY = os.getenv("GEOAPIFY_API_KEY") # Yeni eklenen anahtar
+
+# Kandilli API
 API_URL = "https://api.orhanaydogdu.com.tr/deprem/kandilli/live"
 
 # FİLTRELER
 MIN_MAGNITUDE = 4.0
 CHECK_INTERVAL = 20
 MAX_DISTANCE_KM = 500
-MESSAGE_LIMIT = 5  # En fazla kaç detaylı mesaj atılsın?
+MESSAGE_LIMIT = 5 
 
 # Koordinat Kontrolü
 try:
@@ -31,7 +34,8 @@ except (TypeError, ValueError):
     print("❌ HATA: Koordinatlar eksik!")
     sys.exit(1)
 
-# --- MATEMATİKSEL FONKSİYONLAR ---
+# --- YARDIMCI FONKSİYONLAR ---
+
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371
     d_lat = math.radians(lat2 - lat1)
@@ -42,29 +46,89 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def send_telegram(message):
+def send_telegram_text(message):
+    """Sadece metin mesajı gönderir (Raporlar ve Hatalar için)"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
         requests.post(url, json=payload, timeout=10)
-    except:
-        pass
+    except Exception as e:
+        print(f"Telegram Text Hatası: {e}")
+
+def send_telegram_photo(caption, image_data):
+    """Harita fotoğrafı gönderir (Deprem Bildirimi için)"""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    
+    # Multipart/form-data formatında gönderim
+    files = {'photo': ('map.png', image_data, 'image/png')}
+    data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
+    
+    try:
+        requests.post(url, data=data, files=files, timeout=20)
+    except Exception as e:
+        print(f"Telegram Foto Hatası: {e}")
+
+def get_static_map_image(eq_lat, eq_lon):
+    """Geoapify'dan harita resmini indirir"""
+    if not GEOAPIFY_API_KEY:
+        return None
+    
+    try:
+        # Harita URL'i (Otomatik ortalar ve marker koyar)
+        # Kırmızı Marker: Deprem, Mavi Marker: Sen
+        map_url = (
+            f"https://maps.geoapify.com/v1/staticmap?"
+            f"style=osm-bright&width=600&height=400&"
+            f"marker=lonlat:{eq_lon},{eq_lat};color:#ff0000;size:large;text:D&"
+            f"marker=lonlat:{MY_LON},{MY_LAT};color:#0000ff;size:large;text:Ben&"
+            f"apiKey={GEOAPIFY_API_KEY}"
+        )
+        
+        response = requests.get(map_url, timeout=10)
+        if response.status_code == 200:
+            return response.content # Resmin binary (ham) verisi
+    except Exception as e:
+        print(f"Harita oluşturulamadı: {e}")
+    
+    return None
 
 def get_earthquake_data():
+    """Kandilli verisini çeker, hata varsa bildirir"""
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         response = requests.get(API_URL, headers=headers, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("status"):
-                return data["result"]
+        
+        # HATA KONTROLÜ #1: HTTP Hatası (404, 500 vs)
+        if response.status_code != 200:
+            err_msg = f"⚠️ **SİSTEM HATASI:** Kandilli API cevap vermiyor.\nKod: {response.status_code}"
+            print(err_msg)
+            send_telegram_text(err_msg)
+            return []
+
+        data = response.json()
+        
+        # HATA KONTROLÜ #2: Boş veya bozuk veri
+        if not data.get("status"):
+            err_msg = "⚠️ **SİSTEM HATASI:** Kandilli verisi bozuk veya boş geldi."
+            print(err_msg)
+            send_telegram_text(err_msg)
+            return []
+            
+        return data["result"]
+
     except Exception as e:
-        print(f"Hata: {e}")
-    return []
+        # HATA KONTROLÜ #3: Bağlantı/Timeout hatası
+        err_msg = f"⚠️ **BAĞLANTI HATASI:** Veri çekilemedi.\nDetay: {str(e)}"
+        print(err_msg)
+        send_telegram_text(err_msg)
+        return []
 
 # --- GÜNLÜK RAPOR ---
 def check_daily_report(earthquakes, now_tr):
@@ -109,12 +173,11 @@ def check_daily_report(earthquakes, now_tr):
         f"➗ Ortalama: **{avg_mag:.2f}**\n\n"
         f"Nöbetteyim, güvendesin. 🤖"
     )
-    send_telegram(msg)
+    send_telegram_text(msg)
     print("✅ Günlük rapor gönderildi.")
 
-# --- ANLIK KONTROL (LİMİTLİ) ---
+# --- ANLIK KONTROL (HARİTALI) ---
 def check_new_earthquakes(earthquakes, now_tr):
-    # 1. Havuz (Toplama)
     valid_quakes = []
 
     for eq in earthquakes:
@@ -131,15 +194,15 @@ def check_new_earthquakes(earthquakes, now_tr):
             eq_time = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
             diff_minutes = (now_tr - eq_time).total_seconds() / 60
             
-            # Filtreleme
             if dist_km <= MAX_DISTANCE_KM and mag >= MIN_MAGNITUDE and 0 <= diff_minutes <= CHECK_INTERVAL:
-                # Tüm veriyi bir sözlük (dict) olarak listeye atıyoruz
                 valid_quakes.append({
                     "mag": mag,
                     "title": title,
                     "date": date_str,
                     "depth": depth,
-                    "dist": dist_km
+                    "dist": dist_km,
+                    "lat": eq_lat,
+                    "lon": eq_lon
                 })
         except:
             continue
@@ -148,17 +211,15 @@ def check_new_earthquakes(earthquakes, now_tr):
         print("Anlık risk yok.")
         return
 
-    # 2. Sıralama (En büyükten en küçüğe)
-    # 'mag' anahtarına göre ters (reverse) sırala
+    # Sıralama
     valid_quakes.sort(key=lambda x: x["mag"], reverse=True)
 
-    # 3. Dilimleme (Slicing)
-    top_quakes = valid_quakes[:MESSAGE_LIMIT]      # İlk 5
-    remaining_quakes = valid_quakes[MESSAGE_LIMIT:] # Geriye kalanlar
+    top_quakes = valid_quakes[:MESSAGE_LIMIT]
+    remaining_quakes = valid_quakes[MESSAGE_LIMIT:]
 
-    print(f"⚠ Toplam {len(valid_quakes)} deprem bulundu. İlk {len(top_quakes)} tanesi gönderiliyor.")
+    print(f"⚠ {len(valid_quakes)} deprem bulundu. Gönderiliyor...")
 
-    # 4. Detaylı Mesajları Gönder
+    # Detaylı Mesajlar (HARİTALI)
     for q in top_quakes:
         msg = (
             f"🚨 **DEPREM UYARISI!**\n\n"
@@ -168,21 +229,27 @@ def check_new_earthquakes(earthquakes, now_tr):
             f"🕒 **Saat:** {q['date']}\n"
             f"⚠ **Derinlik:** {q['depth']} km"
         )
-        send_telegram(msg)
+        
+        # Haritayı oluştur
+        map_image = get_static_map_image(q['lat'], q['lon'])
+        
+        if map_image:
+            # Resim varsa resimli at
+            send_telegram_photo(msg, map_image)
+        else:
+            # Resim oluşturulamazsa düz metin at (Yedek plan)
+            send_telegram_text(msg)
 
-    # 5. Özet Mesaj (Eğer limit aşıldıysa)
+    # Özet Mesaj (Metin Olarak)
     if remaining_quakes:
         count_rem = len(remaining_quakes)
         max_rem = max(q["mag"] for q in remaining_quakes)
-        
         summary_msg = (
-            f"⚠️ **DİKKAT:** Bölgede yoğun hareketlilik var.\n\n"
-            f"Yukarıdakilere ek olarak **{count_rem} adet** daha sarsıntı tespit edildi.\n"
-            f"Bunların en büyüğü: **{max_rem}** büyüklüğünde.\n"
-            f"Lütfen tedbirli olun."
+            f"⚠️ **DİKKAT:** Bölgede yoğun hareketlilik var.\n"
+            f"Ek olarak **{count_rem} adet** daha sarsıntı tespit edildi. "
+            f"En büyüğü: **{max_rem}**. Lütfen tedbirli olun."
         )
-        send_telegram(summary_msg)
-        print(f"➕ Ekstra {count_rem} deprem için özet geçildi.")
+        send_telegram_text(summary_msg)
 
 if __name__ == "__main__":
     now_tr = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=3)
@@ -193,5 +260,3 @@ if __name__ == "__main__":
     if quakes:
         check_daily_report(quakes, now_tr)
         check_new_earthquakes(quakes, now_tr)
-    else:
-        print("Veri çekilemedi.")

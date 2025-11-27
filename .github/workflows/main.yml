@@ -26,4 +26,5 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MY_LAT: ${{ secrets.MY_LAT }}
           MY_LON: ${{ secrets.MY_LON }}
+          GEOAPIFY_API_KEY: ${{ secrets.GEOAPIFY_API_KEY }}
         run: python main.py
